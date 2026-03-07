@@ -1,0 +1,23 @@
+{
+  "watches": [
+    {
+      "id": "watch-1",
+      "enabled": true,
+      "platform": "resy",
+      "venueId": 55555,
+      "venueName": "Carne Mare",
+      "dates": ["2026-03-14", "2026-03-15"],
+      "partySize": 2,
+      "timeRange": {
+        "earliest": "18:00",
+        "latest": "21:00"
+      },
+      "autoBook": true,
+      "filters": {
+        "excludeGDAOnly": false,
+        "maxCancellationFee": null,
+        "seatTypes": ["Dining Room"]
+      }
+    }
+  ]
+}
