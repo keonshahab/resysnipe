@@ -8,8 +8,10 @@ Personal reservation monitoring tool that polls Resy and OpenTable for availabil
 
 ## Architecture
 
+### Phase 1 (Current)
+
 ```
-reservation-sniper/
+resysnipe/
 ├── src/
 │   ├── adapters/
 │   │   ├── resy.js            # Resy API client
@@ -23,6 +25,71 @@ reservation-sniper/
 ├── test-resy.js                # Quick script to test Resy API connectivity
 ├── package.json
 ├── .env.example                # Template for secrets
+└── .gitignore
+```
+
+### Phase 2 (Release Snipe)
+
+```
+resysnipe/
+├── src/
+│   ├── adapters/
+│   │   ├── resy.js            # Resy API client (+ need_to_know parsing)
+│   │   └── opentable.js       # OpenTable API client (stub)
+│   ├── notifications/
+│   │   └── email.js            # Nodemailer email alerts
+│   ├── sniper.js               # Release snipe mode — high-frequency polling + instant booking
+│   ├── mode-detector.js        # Parses need_to_know to determine monitor vs release mode
+│   ├── poller.js               # Cron-based polling loop (monitor mode)
+│   ├── config.js               # Loads .env config
+│   └── watchlist.json          # Target restaurants/dates/preferences
+├── index.js                    # Entry point — starts the poller (monitor mode)
+├── snipe.js                    # Entry point — runs a single release snipe
+├── test-resy.js                # Quick script to test Resy API connectivity
+├── package.json
+├── .env.example
+└── .gitignore
+```
+
+### Phase 3 (Web Dashboard)
+
+```
+resysnipe/
+├── src/
+│   ├── adapters/
+│   │   ├── resy.js            # Resy API client
+│   │   └── opentable.js       # OpenTable API client (stub)
+│   ├── notifications/
+│   │   └── email.js            # Nodemailer email alerts
+│   ├── sniper.js               # Release snipe engine
+│   ├── mode-detector.js        # Monitor vs release mode detection
+│   ├── poller.js               # Cron-based polling loop
+│   ├── config.js               # Loads .env config
+│   └── watchlist.json          # Target restaurants/dates/preferences
+├── server/
+│   ├── index.js                # Express API server
+│   ├── routes/
+│   │   ├── venues.js           # Search venues, fetch need_to_know metadata
+│   │   ├── watches.js          # CRUD for watches (read/write watchlist.json)
+│   │   └── status.js           # Watch status (monitoring, waiting, booked, etc.)
+│   └── orchestrator.js         # Manages running pollers + snipers per watch
+├── web/
+│   ├── src/
+│   │   ├── App.jsx             # Main React app
+│   │   ├── components/
+│   │   │   ├── VenueSearch.jsx     # Restaurant search bar
+│   │   │   ├── WatchForm.jsx       # Date/party/time picker, creates a watch
+│   │   │   ├── WatchList.jsx       # Dashboard of all active watches
+│   │   │   └── WatchCard.jsx       # Single watch status card
+│   │   └── index.jsx
+│   ├── public/
+│   │   └── index.html
+│   └── package.json            # React/Vite config
+├── index.js                    # CLI entry point — starts poller
+├── snipe.js                    # CLI entry point — single release snipe
+├── test-resy.js
+├── package.json
+├── .env.example
 └── .gitignore
 ```
 
@@ -334,100 +401,347 @@ AUTO_BOOK=false
 8. ✅ `test-resy.js` script to verify API connectivity
 9. ✅ Clean logging with timestamps
 
-## Phase 2 (Future)
+## Phase 2 — Release Snipe Mode
 
-- OpenTable adapter (reverse-engineer their availability API)
-- Simple web dashboard to manage watchlist
-- OpenClaw skill extraction (each adapter becomes a standalone skill)
-- Booking confirmation details in email alerts
-- Token expiration monitoring and refresh
+### Concept
+
+Many high-demand restaurants (e.g. Torrisi, 4 Charles, Don Angie) release reservations on a fixed schedule — typically X days in advance at a specific time (e.g. "30 days out at 10:00 AM ET"). These slots get booked within seconds of release.
+
+Release snipe mode handles this by:
+1. Auto-detecting the release schedule from Resy's `need_to_know` venue metadata
+2. Starting high-frequency polling (every 500ms) 5 seconds before release time
+3. Instantly booking the first matching slot via `/3/details` -> `/3/book`
+4. Exiting after a successful booking or a 2-minute timeout
+
+### need_to_know Parsing
+
+The Resy API response includes a `need_to_know` field on each venue with text like:
+
+> "Reservations can be made up to 30 days in advance, starting at 10:00 AM EST."
+
+The mode detector (`src/mode-detector.js`) should parse this to extract:
+- **Advance window** — how many days ahead reservations open (e.g. `30`)
+- **Release time** — what time they become available (e.g. `10:00 AM EST`)
+
+Given a target date, the detector calculates the exact release datetime. If that datetime is in the future, the watch should use release snipe mode. If it's in the past (reservations are already open), use normal monitor/polling mode.
+
+### Sniper Logic (`src/sniper.js`)
+
+```js
+// Core loop (simplified):
+async function snipe(watch) {
+  const releaseTime = new Date(watch.releaseTime);
+  const startPollingAt = new Date(releaseTime.getTime() - 5000); // 5 sec early
+  const deadline = new Date(releaseTime.getTime() + 120000);     // 2 min timeout
+  const interval = watch.pollIntervalMs || 500;
+
+  // Wait until 5 seconds before release
+  await sleepUntil(startPollingAt);
+
+  log(`Snipe started for ${watch.venueName} — polling every ${interval}ms`);
+
+  while (Date.now() < deadline) {
+    const start = Date.now();
+    try {
+      const slots = await resy.checkAvailability({
+        venueId: watch.venueId,
+        date: watch.targetDate,
+        partySize: watch.partySize,
+        timeRange: watch.timeRange,
+      });
+
+      const filtered = applyFilters(slots, watch.filters);
+
+      if (filtered.length > 0) {
+        log(`SLOT FOUND in ${Date.now() - start}ms — booking immediately`);
+        const result = await resy.autoBook(filtered[0], watch.partySize);
+        log(`BOOKED! ${watch.venueName} on ${watch.targetDate}`);
+        await sendBookingConfirmation(watch, filtered[0], watch.targetDate);
+        return result;
+      }
+    } catch (err) {
+      log(`Poll error: ${err.message}`);
+    }
+
+    // Wait remainder of interval
+    const elapsed = Date.now() - start;
+    if (elapsed < interval) await sleep(interval - elapsed);
+  }
+
+  log(`Snipe timed out after 2 minutes for ${watch.venueName}`);
+}
+```
+
+### Mode Detector (`src/mode-detector.js`)
+
+```js
+// Parses need_to_know text to extract release policy
+function parseReleasePolicy(needToKnowText) {
+  // Match patterns like:
+  // "Reservations can be made up to 30 days in advance, starting at 10:00 AM EST"
+  // "Reservations are released 14 days in advance at 9:00 AM ET"
+  const daysMatch = needToKnowText.match(/(\d+)\s*days?\s*(in advance|ahead|out)/i);
+  const timeMatch = needToKnowText.match(/(?:at|starting at)\s+(\d{1,2}):(\d{2})\s*(AM|PM)\s*(E[SD]T|ET)/i);
+
+  if (!daysMatch || !timeMatch) return null;
+
+  return {
+    advanceDays: parseInt(daysMatch[1]),
+    releaseHour: parseInt(timeMatch[1]) + (timeMatch[3] === 'PM' && timeMatch[1] !== '12' ? 12 : 0),
+    releaseMinute: parseInt(timeMatch[2]),
+    timezone: timeMatch[4],
+  };
+}
+
+// Given a target date and release policy, returns the release datetime
+function getReleaseTime(targetDate, policy) {
+  // targetDate minus advanceDays = the day reservations open
+  // At policy.releaseHour:releaseMinute in policy.timezone
+}
+
+// Determines which mode to use for a given watch
+function detectMode(watch, needToKnowText) {
+  const policy = parseReleasePolicy(needToKnowText);
+  if (!policy) return { mode: 'monitor' }; // can't determine, default to polling
+
+  const releaseTime = getReleaseTime(watch.targetDate || watch.dates[0], policy);
+
+  if (releaseTime > new Date()) {
+    return { mode: 'release', releaseTime: releaseTime.toISOString() };
+  }
+  return { mode: 'monitor' };
+}
+```
+
+### Watchlist Format (Release Mode)
+
+Release snipe watches use `"mode": "release"` with additional fields:
+
+```json
+{
+  "id": "snipe-torrisi",
+  "enabled": true,
+  "mode": "release",
+  "platform": "resy",
+  "venueId": 64593,
+  "venueName": "Torrisi",
+  "releaseTime": "2026-03-08T10:00:00-05:00",
+  "targetDate": "2026-04-07",
+  "partySize": 2,
+  "timeRange": { "earliest": "18:00", "latest": "21:00" },
+  "autoBook": true,
+  "pollIntervalMs": 500,
+  "filters": { "seatTypes": ["Dining Room"] }
+}
+```
+
+Key differences from monitor mode:
+- `mode` — `"release"` instead of omitted/`"monitor"`
+- `releaseTime` — ISO datetime with timezone offset for when slots drop
+- `targetDate` — single date string (not an array)
+- `pollIntervalMs` — polling frequency during snipe (default 500ms)
+- `autoBook` — should always be `true` for release snipes (the whole point is to book instantly)
+
+### snipe.js Entry Point
+
+```bash
+# Run a single release snipe from CLI
+node snipe.js snipe-torrisi
+
+# Or snipe all enabled release watches
+node snipe.js
+```
+
+### Phase 2 Deliverables
+
+1. `src/sniper.js` — Release snipe engine with high-frequency polling and instant booking
+2. `src/mode-detector.js` — Parses `need_to_know` text to extract release policy, determines monitor vs release mode
+3. `snipe.js` — CLI entry point for running release snipes
+4. Updated `src/adapters/resy.js` — New method to fetch venue `need_to_know` metadata
+5. Updated watchlist format supporting `mode: "release"` entries
+6. Millisecond-precision logging for speed tracking
+7. 2-minute timeout safety net
+8. Email confirmation on successful snipe booking
 
 ---
 
-## Claude Code Prompt
+## Phase 3 — Web Dashboard
 
-Copy and paste this into Claude Code to build the project:
+### Concept
+
+A localhost web UI where the user picks a restaurant and date — the app handles everything else. No need to manually determine modes, calculate release times, or edit JSON files.
+
+### User Flow
+
+1. **Search** — User types a restaurant name. The app hits the Resy API to find matching venues.
+2. **Select** — User picks a venue. The app fetches its `need_to_know` metadata to determine the reservation release policy.
+3. **Configure** — User picks a date, party size, and preferred time range.
+4. **Auto-detect mode** — The app calculates:
+   - If reservations for the target date are already open -> **monitor mode** (poll for cancellations every 60s)
+   - If reservations haven't been released yet -> **release snipe mode** (calculates exact release datetime, waits, then polls at 500ms)
+5. **Dashboard** — Shows all active watches with live status: `waiting for release`, `monitoring`, `sniping`, `booked`, `failed`, `timed out`.
+6. **Notifications** — Email on successful booking (same as Phase 1/2).
+
+### Backend (Express)
+
+`server/index.js` — Express app serving the API and static React build.
+
+**API Routes:**
+
+`server/routes/venues.js`:
+- `GET /api/venues/search?q=torrisi` — Search Resy for venues by name
+- `GET /api/venues/:venueId/info` — Fetch venue details including `need_to_know`, returns parsed release policy
+
+`server/routes/watches.js`:
+- `GET /api/watches` — List all watches from watchlist.json
+- `POST /api/watches` — Create a new watch (auto-detects mode from venue metadata)
+- `PUT /api/watches/:id` — Update a watch
+- `DELETE /api/watches/:id` — Remove a watch
+- `POST /api/watches/:id/start` — Start monitoring/sniping a watch
+- `POST /api/watches/:id/stop` — Stop a watch
+
+`server/routes/status.js`:
+- `GET /api/status` — Returns status of all running watches (mode, last poll time, slots found, etc.)
+
+`server/orchestrator.js`:
+- Manages running poller and sniper instances per watch
+- Starts/stops watches dynamically
+- Tracks status in memory: `{ watchId: { mode, status, lastPoll, slotsFound, error } }`
+- When a watch is created via the API, orchestrator auto-determines mode and starts it
+
+### Frontend (React + Vite)
+
+Simple, clean UI with these components:
+
+`VenueSearch.jsx`:
+- Text input with debounced search
+- Dropdown showing matching venues with name, neighborhood, cuisine type
+- On select, fetches venue info and opens WatchForm
+
+`WatchForm.jsx`:
+- Shows venue name, release policy (parsed from need_to_know)
+- Date picker, party size selector, time range inputs
+- Shows auto-detected mode: "Will monitor for cancellations" or "Will snipe at [release time]"
+- Submit creates the watch and starts it
+
+`WatchList.jsx`:
+- Dashboard grid of all watches
+- Each watch shows: venue name, date, mode, status badge, time until release (if applicable)
+
+`WatchCard.jsx`:
+- Single watch card with status indicator
+- Status badges: `Waiting` (yellow), `Monitoring` (blue), `Sniping` (orange), `Booked` (green), `Failed` (red)
+- If release mode: countdown timer to release time
+- Stop/delete buttons
+
+### Resy Venue Search Endpoint
+
+For the venue search feature, use:
 
 ```
-Build a Node.js reservation sniper app based on this spec. The app monitors Resy for restaurant reservation availability and auto-books when slots open. This project is in a git repo at https://github.com/keonshahab/resysnipe.
+GET https://api.resy.com/3/venue_search
+```
 
-Key requirements:
+or alternatively filter from the `/3/collection/venues` response. The exact search endpoint needs to be confirmed via DevTools — if a dedicated search endpoint doesn't exist, use the collection endpoint and filter client-side by name.
 
-ARCHITECTURE:
-- Modular adapter pattern: src/adapters/resy.js and src/adapters/opentable.js (stub)
-- Each adapter exports: checkAvailability({ venueId, date, partySize, timeRange }) and getVenueInfo(venueId)
-- src/notifications/email.js for Nodemailer alerts
-- src/poller.js for the cron loop
-- src/config.js loads .env via dotenv
-- watchlist.json for target restaurants
+### Phase 3 Deliverables
 
-RESY ADAPTER:
-- GET https://api.resy.com/4/find with params: venue_id, day (YYYY-MM-DD), party_size, lat=0, long=0
-- Auth headers on every request:
-  - authorization: ResyAPI api_key="VbWk7s3L4KiK5fzlO7JD3Q5EYolJI7n5"
-  - x-resy-auth-token: <from .env RESY_AUTH_TOKEN>
-  - x-resy-universal-auth: <same token>
-  - origin: https://resy.com
-  - referer: https://resy.com/
-  - accept: application/json
-  - cache-control: no-cache
-- Slots are in results.venues[].slots[] — each has config.token, date.start, date.end, quantity, is_global_dining_access, payment info
+1. Express API server (`server/`) with venue search, watch CRUD, and status endpoints
+2. Orchestrator that manages poller + sniper instances per watch
+3. React frontend (`web/`) with venue search, watch creation, and status dashboard
+4. Auto-mode detection: user picks restaurant + date, app figures out the rest
+5. Live status updates on the dashboard
+6. Runs on localhost only — no authentication needed
+7. `npm run dashboard` script to start both backend and frontend
 
-AUTO-BOOKING FLOW (two POST requests):
-1. POST /3/details with payload: { commit: 0, config_id: slot.config.token, day: "YYYY-MM-DD", party_size: N }
-   - Response contains book_token somewhere in the JSON body
-2. POST /3/book with payload: { book_token: "<from step 1>", struct_payment_method: {"id": <from .env RESY_PAYMENT_METHOD_ID as integer>}, source_id: "resy.com-venue-card", venue_marketing_opt_in: 0 }
-   - Returns 201 Created on success
+---
 
-POLLER:
-- node-cron, runs every 60 seconds
-- For each enabled watch in watchlist.json: check availability, filter by timeRange and seatTypes
-- Track seen slots in-memory (Set of config.token values) to only act on NEW slots
-- If new slot found AND autoBook is true on the watch AND AUTO_BOOK=true in .env: run the auto-book flow, then send confirmation email
-- If autoBook is false: just send alert email with booking link
-- Handle errors gracefully — log and continue, never crash
+## Future Phases
 
-EMAIL:
-- Nodemailer with Gmail app password
-- Include: restaurant name, time, seat type, GDA status, cancellation fee, direct Resy link
-- Different subject line for "auto-booked" vs "slot available"
+- OpenTable adapter (reverse-engineer their availability API)
+- OpenClaw skill extraction (each adapter becomes a standalone skill)
+- Token expiration monitoring and refresh
+- Multiple location support (not just NY)
+- Booking history log
+- SMS notifications via Twilio
 
-WATCHLIST FORMAT:
-{
-  "watches": [{
-    "id": "watch-1",
-    "enabled": true,
-    "platform": "resy",
-    "venueId": 55555,
-    "venueName": "Carne Mare",
-    "dates": ["2026-03-14", "2026-03-15"],
-    "partySize": 2,
-    "timeRange": { "earliest": "18:00", "latest": "21:00" },
-    "autoBook": true,
-    "filters": { "excludeGDAOnly": false, "maxCancellationFee": null, "seatTypes": ["Dining Room"] }
-  }]
-}
+---
 
-CREATE THE ACTUAL .env FILE (not just .env.example) with these values:
-RESY_API_KEY=VbWk7s3L4KiK5fzlO7JD3Q5EYolJI7n5
-RESY_AUTH_TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjE3NzY3OTgxNjUsInVpZCI6ODA0NjQ4MiwiZ3QiOiJjb25zdW1lciIsImdzIjpbXSwibGFuZyI6ImVuLXVzIiwiZXh0cmEiOnsiZ3Vlc3RfaWQiOjM2Njc2NTE2fX0.AV-Gl92bgkbGuJAQJn24QrwCggGiP-McjMPAB0u8IgFFAVNXOCZUc_ttsYAun23ltynMgY-JjtD3dsMAJ29lRKv4ASYBKU7DU7fFAJtMECNjKdNWb4aLLTN8XUH_9VX53c2CBtlZlPDhfXH0nd0imdL2Mq9fswB5hmDwExJswQso1JqU
-RESY_PAYMENT_METHOD_ID=15332505
-EMAIL_FROM=kshahab6@gmail.com
-EMAIL_TO=kshahab6@gmail.com
-EMAIL_PASSWORD=sugvpllytuvkwoen
-POLL_INTERVAL_MINUTES=1
-AUTO_BOOK=false
+## Claude Code Prompt — Phase 1
 
-Also create a .env.example with placeholder values (no real secrets).
+Copy and paste this into Claude Code to build Phase 1:
 
-CRITICAL: Create .gitignore FIRST before anything else, and make sure it includes:
-node_modules/
-.env
+```
+Read SPEC.md and build the entire project based on it.
+```
 
-Also include:
-- test-resy.js script to verify API connectivity (fetches availability for venue 55555)
-- Clean console logging with timestamps
-- README.md with setup and usage instructions
+---
 
-Start building the complete project now.
+## Claude Code Prompt — Phase 2
+
+Copy and paste this into Claude Code to build Phase 2:
+
+```
+Read SPEC.md and build Phase 2 — Release Snipe Mode. The existing Phase 1 code is already built and working. Add the following to the project:
+
+KEY FILES TO CREATE:
+
+1. src/sniper.js — Release snipe engine
+   - Takes a watch config with mode: "release"
+   - Calculates when to start based on releaseTime (5 seconds early)
+   - Polls checkAvailability every pollIntervalMs (default 500ms)
+   - Filters slots by timeRange and filters.seatTypes
+   - The instant a matching slot is found, calls resy.autoBook(slot, partySize)
+   - Sends booking confirmation email on success
+   - Logs with millisecond timestamps: `[2026-03-08T15:00:00.123Z]`
+   - Times out after 2 minutes past releaseTime
+   - Exits process on success or timeout
+
+2. src/mode-detector.js — Determines monitor vs release mode
+   - parseReleasePolicy(needToKnowText) — regex parses strings like "Reservations can be made up to 30 days in advance, starting at 10:00 AM EST"
+   - Extracts: advanceDays (integer), releaseHour, releaseMinute, timezone
+   - getReleaseTime(targetDate, policy) — given a target date and policy, returns the Date when those reservations will be released
+   - detectMode(watch, needToKnowText) — returns { mode: 'release', releaseTime } or { mode: 'monitor' }
+
+3. snipe.js — CLI entry point
+   - Usage: node snipe.js [watch-id]
+   - If watch-id provided, runs that specific snipe from watchlist.json
+   - If no watch-id, runs all enabled watches with mode: "release"
+   - Loads watch from src/watchlist.json, passes to sniper.js
+   - If watch doesn't have releaseTime set but has a targetDate, use mode-detector to auto-calculate it
+
+UPDATE EXISTING FILES:
+
+4. src/adapters/resy.js — Add a getVenueNeedToKnow(venueId) method
+   - Fetches venue info and extracts the need_to_know text
+   - This is used by mode-detector to determine release schedule
+
+5. src/watchlist.json — Add a sample release snipe entry:
+   {
+     "id": "snipe-torrisi",
+     "enabled": true,
+     "mode": "release",
+     "platform": "resy",
+     "venueId": 64593,
+     "venueName": "Torrisi",
+     "releaseTime": "2026-03-08T10:00:00-05:00",
+     "targetDate": "2026-04-07",
+     "partySize": 2,
+     "timeRange": { "earliest": "18:00", "latest": "21:00" },
+     "autoBook": true,
+     "pollIntervalMs": 500,
+     "filters": { "seatTypes": ["Dining Room"] }
+   }
+
+6. package.json — Add script: "snipe": "node snipe.js"
+
+IMPORTANT DETAILS:
+- The sniper must be FAST. Minimize overhead in the hot loop — no unnecessary logging per poll, just log when slots are found or errors occur.
+- Use process.hrtime.bigint() or Date.now() for millisecond-precision timing
+- The resy adapter already has checkAvailability() and autoBook() — reuse them
+- Global AUTO_BOOK=true in .env is still required as a safety switch
+- Handle network errors in the poll loop gracefully — log and retry, don't crash
+- The sniper should work standalone (node snipe.js) without the main poller running
+
+Start building Phase 2 now.
 ```

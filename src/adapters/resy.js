@@ -111,9 +111,23 @@ async function autoBook(slot, partySize) {
   return result;
 }
 
+async function getVenueNeedToKnow(venueId) {
+  const venues = await fetchAllVenues({
+    date: new Date().toISOString().split('T')[0],
+    partySize: 2,
+  });
+
+  const match = venues.find((v) => v.venue?.id?.resy === venueId);
+  if (!match) return null;
+
+  // need_to_know can be in venue.need_to_know, venue.about, or templates
+  return match.venue?.need_to_know || match.venue?.about?.need_to_know || null;
+}
+
 module.exports = {
   name: 'resy',
   checkAvailability,
   getVenueInfo,
+  getVenueNeedToKnow,
   autoBook,
 };

@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "snipe": "node snipe.js",
     "test-resy": "node test-resy.js"
   },
   "dependencies": {

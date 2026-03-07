@@ -18,6 +18,26 @@
         "maxCancellationFee": null,
         "seatTypes": ["Dining Room"]
       }
+    },
+    {
+      "id": "snipe-torrisi",
+      "enabled": true,
+      "mode": "release",
+      "platform": "resy",
+      "venueId": 64593,
+      "venueName": "Torrisi",
+      "releaseTime": "2026-03-08T10:00:00-05:00",
+      "targetDate": "2026-04-07",
+      "partySize": 2,
+      "timeRange": {
+        "earliest": "18:00",
+        "latest": "21:00"
+      },
+      "autoBook": true,
+      "pollIntervalMs": 500,
+      "filters": {
+        "seatTypes": ["Dining Room"]
+      }
     }
   ]
 }
