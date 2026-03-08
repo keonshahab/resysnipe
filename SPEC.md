@@ -542,26 +542,91 @@ Key differences from monitor mode:
 - `pollIntervalMs` — polling frequency during snipe (default 500ms)
 - `autoBook` — should always be `true` for release snipes (the whole point is to book instantly)
 
+### Cancellation Snipe Mode
+
+For hot restaurants where reservations are already within the booking window but completely sold out. Cancellations appear and get grabbed within seconds, so 60-second polling is too slow.
+
+**How it works:**
+- Polls every 1-2 seconds (configurable via `pollIntervalMs`, default 1000ms)
+- Starts immediately — no waiting for a release time
+- Runs continuously until a matching slot is found or the target date passes
+- The instant a slot appears, fires `/3/details` -> `/3/book` (same booking flow as release snipe)
+- `AUTO_BOOK=true` must be set in `.env`
+- Sends confirmation email on success
+
+**Rate limiting:** Polling every 1 second = 60 requests/minute per restaurant. When watching multiple restaurants, a random jitter of 0-200ms is added to each poll to stagger requests and avoid all watches firing simultaneously.
+
+**Watchlist Format (Cancellation Mode):**
+
+```json
+{
+  "id": "cancel-torrisi",
+  "enabled": true,
+  "mode": "cancellation",
+  "platform": "resy",
+  "venueId": 64593,
+  "venueName": "Torrisi",
+  "targetDate": "2026-03-14",
+  "partySize": 2,
+  "timeRange": { "earliest": "18:00", "latest": "21:00" },
+  "autoBook": true,
+  "pollIntervalMs": 1000,
+  "filters": { "seatTypes": ["Dining Room"] }
+}
+```
+
+Key differences from release mode:
+- `mode` — `"cancellation"` instead of `"release"`
+- No `releaseTime` — starts polling immediately
+- `pollIntervalMs` — default 1000ms (vs 500ms for release)
+- Runs until target date passes (not a 2-minute window)
+
+### Three Modes Summary
+
+| Mode | When to use | Poll interval | Duration | Trigger |
+|------|------------|---------------|----------|---------|
+| **monitor** | Slots available, want alerts | 60s (cron) | Ongoing | `node index.js` |
+| **release** | Reservations haven't dropped yet | 500ms | 2 min window | `node snipe.js` |
+| **cancellation** | Sold out, watching for cancellations | 1000ms | Until target date | `node snipe.js` |
+
+### Mode Auto-Detection
+
+The mode detector (`src/mode-detector.js`) now supports all three modes:
+
+```js
+detectMode(watch, needToKnowText, { availableSlots })
+```
+
+Logic:
+1. Parse `need_to_know` to get release policy (advance days + release time)
+2. If target date's release time is in the future → `"release"` mode
+3. If release time has passed AND `availableSlots === 0` → `"cancellation"` mode
+4. If release time has passed AND slots are available → `"monitor"` mode
+
 ### snipe.js Entry Point
 
 ```bash
-# Run a single release snipe from CLI
+# Run a specific snipe by watch ID
 node snipe.js snipe-torrisi
+node snipe.js cancel-torrisi
 
-# Or snipe all enabled release watches
+# Run all enabled release + cancellation watches
 node snipe.js
 ```
 
+The entry point auto-resolves mode when not explicitly set: fetches venue metadata, checks current availability, and determines the right approach.
+
 ### Phase 2 Deliverables
 
-1. `src/sniper.js` — Release snipe engine with high-frequency polling and instant booking
-2. `src/mode-detector.js` — Parses `need_to_know` text to extract release policy, determines monitor vs release mode
-3. `snipe.js` — CLI entry point for running release snipes
-4. Updated `src/adapters/resy.js` — New method to fetch venue `need_to_know` metadata
-5. Updated watchlist format supporting `mode: "release"` entries
+1. `src/sniper.js` — Snipe engine supporting both release and cancellation modes with shared polling loop
+2. `src/mode-detector.js` — Parses `need_to_know` text, determines release/cancellation/monitor mode
+3. `snipe.js` — CLI entry point for running release and cancellation snipes
+4. Updated `src/adapters/resy.js` — `getVenueNeedToKnow(venueId)` method
+5. Updated watchlist format supporting `mode: "release"` and `mode: "cancellation"` entries
 6. Millisecond-precision logging for speed tracking
-7. 2-minute timeout safety net
-8. Email confirmation on successful snipe booking
+7. Random jitter (0-200ms) to stagger requests across multiple watches
+8. 2-minute timeout for release mode; runs until target date for cancellation mode
+9. Email confirmation on successful snipe booking
 
 ---
 

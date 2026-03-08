@@ -38,6 +38,25 @@
       "filters": {
         "seatTypes": ["Dining Room"]
       }
+    },
+    {
+      "id": "cancel-torrisi",
+      "enabled": true,
+      "mode": "cancellation",
+      "platform": "resy",
+      "venueId": 64593,
+      "venueName": "Torrisi",
+      "targetDate": "2026-03-14",
+      "partySize": 2,
+      "timeRange": {
+        "earliest": "18:00",
+        "latest": "21:00"
+      },
+      "autoBook": true,
+      "pollIntervalMs": 3000,
+      "filters": {
+        "seatTypes": ["Dining Room"]
+      }
     }
   ]
 }

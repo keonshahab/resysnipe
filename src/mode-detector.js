@@ -65,7 +65,18 @@ function getReleaseTime(targetDate, policy) {
   return new Date(`${year}-${month}-${day}T${hour}:${min}:00${offsetStr}`);
 }
 
-function detectMode(watch, needToKnowText) {
+/**
+ * Determines which mode to use for a given watch:
+ *   - "release"      — target date is outside the booking window (reservations haven't dropped yet)
+ *   - "cancellation"  — target date is inside the window AND no matching slots available
+ *   - "monitor"       — target date is inside the window AND slots are currently available
+ *
+ * @param {object} watch - Watch config
+ * @param {string} needToKnowText - Venue's need_to_know text
+ * @param {object} [options]
+ * @param {number} [options.availableSlots] - Number of currently available matching slots (for cancellation detection)
+ */
+function detectMode(watch, needToKnowText, options = {}) {
   const policy = parseReleasePolicy(needToKnowText);
   if (!policy) return { mode: 'monitor', policy: null };
 
@@ -77,6 +88,12 @@ function detectMode(watch, needToKnowText) {
   if (releaseTime > new Date()) {
     return { mode: 'release', releaseTime: releaseTime.toISOString(), policy };
   }
+
+  // Reservations are already open — check if any slots are available
+  if (typeof options.availableSlots === 'number' && options.availableSlots === 0) {
+    return { mode: 'cancellation', policy };
+  }
+
   return { mode: 'monitor', policy };
 }
 
