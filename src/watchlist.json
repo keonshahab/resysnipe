@@ -6,7 +6,10 @@
       "platform": "resy",
       "venueId": 55555,
       "venueName": "Carne Mare",
-      "dates": ["2026-03-14", "2026-03-15"],
+      "dates": [
+        "2026-03-14",
+        "2026-03-15"
+      ],
       "partySize": 2,
       "timeRange": {
         "earliest": "18:00",
@@ -16,27 +19,9 @@
       "filters": {
         "excludeGDAOnly": false,
         "maxCancellationFee": null,
-        "seatTypes": ["Dining Room"]
-      }
-    },
-    {
-      "id": "snipe-torrisi",
-      "enabled": true,
-      "mode": "release",
-      "platform": "resy",
-      "venueId": 64593,
-      "venueName": "Torrisi",
-      "releaseTime": "2026-03-08T10:00:00-05:00",
-      "targetDate": "2026-04-07",
-      "partySize": 2,
-      "timeRange": {
-        "earliest": "18:00",
-        "latest": "21:00"
-      },
-      "autoBook": true,
-      "pollIntervalMs": 500,
-      "filters": {
-        "seatTypes": ["Dining Room"]
+        "seatTypes": [
+          "Dining Room"
+        ]
       }
     },
     {
@@ -55,8 +40,60 @@
       "autoBook": true,
       "pollIntervalMs": 3000,
       "filters": {
-        "seatTypes": ["Dining Room"]
+        "seatTypes": [
+          "Dining Room"
+        ]
       }
+    },
+    {
+      "id": "watch-1772989486408",
+      "enabled": true,
+      "mode": "cancellation",
+      "platform": "resy",
+      "venueId": 59419,
+      "venueName": "Eyval",
+      "neighborhood": "Bushwick",
+      "cuisine": [
+        "Persian"
+      ],
+      "targetDate": "2026-03-25",
+      "partySize": 2,
+      "timeRange": {
+        "earliest": "18:00",
+        "latest": "21:00"
+      },
+      "autoBook": true,
+      "filters": {
+        "seatTypes": [
+          "Dining Room"
+        ]
+      },
+      "seatType": "Dining Room"
+    },
+    {
+      "id": "watch-1772989975445",
+      "enabled": true,
+      "mode": "cancellation",
+      "platform": "resy",
+      "venueId": 64593,
+      "venueName": "Torrisi",
+      "neighborhood": "Nolita",
+      "cuisine": [
+        "Italian"
+      ],
+      "targetDate": "2026-03-10",
+      "partySize": 2,
+      "timeRange": {
+        "earliest": "18:00",
+        "latest": "21:00"
+      },
+      "autoBook": true,
+      "filters": {
+        "seatTypes": [
+          "Dining Room"
+        ]
+      },
+      "seatType": "Dining Room"
     }
   ]
 }

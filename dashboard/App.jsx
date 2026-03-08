@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { createRoot } from "react-dom/client";
 
 // ─── DESIGN TOKENS ───
 const COLORS = {
@@ -27,87 +28,29 @@ const FONT = {
   sans: "'DM Sans', 'Satoshi', system-ui, sans-serif",
 };
 
-// ─── MOCK DATA (simulates what SSE/API would return) ───
-const MOCK_WATCHES = [
-  {
-    id: "booked-torrisi",
-    venueName: "Torrisi",
-    venueId: 64593,
-    neighborhood: "SoHo",
-    cuisine: "Italian",
-    targetDate: "2026-03-14",
-    partySize: 2,
-    timeRange: { earliest: "18:00", latest: "21:00" },
-    mode: "cancellation",
-    status: "booked",
-    seatType: "Dining Room",
-    bookedTime: "7:30 PM",
-    bookedAt: "2:47 PM",
-    pollCount: 2847,
-    startedAt: Date.now() - 3600000 * 4,
-  },
-  {
-    id: "snipe-carbone",
-    venueName: "Carbone",
-    venueId: 6194,
-    neighborhood: "Greenwich Village",
-    cuisine: "Italian",
-    targetDate: "2026-03-21",
-    partySize: 2,
-    timeRange: { earliest: "19:00", latest: "21:00" },
-    mode: "cancellation",
-    status: "polling",
-    seatType: "Dining Room",
-    pollCount: 3412,
-    lastCheck: Date.now() - 2000,
-    slotsFound: 0,
-    startedAt: Date.now() - 3600000 * 2.78,
-  },
-  {
-    id: "release-donangie",
-    venueName: "Don Angie",
-    venueId: 12345,
-    neighborhood: "West Village",
-    cuisine: "Italian-American",
-    targetDate: "2026-04-07",
-    partySize: 2,
-    timeRange: { earliest: "19:00", latest: "21:00" },
-    mode: "release",
-    status: "waiting",
-    seatType: "Dining Room",
-    releaseTime: "2026-04-07T10:00:00-04:00",
-    pollCount: 0,
-    startedAt: Date.now(),
-  },
-  {
-    id: "watch-carnemare",
-    venueName: "Carne Mare",
-    venueId: 55555,
-    neighborhood: "Seaport",
-    cuisine: "Steakhouse",
-    targetDate: "2026-03-15",
-    partySize: 2,
-    timeRange: { earliest: "19:00", latest: "21:00" },
-    mode: "monitor",
-    status: "monitoring",
-    seatType: "Dining Room",
-    pollCount: 847,
-    lastCheck: Date.now() - 30000,
-    slotsFound: 3,
-    startedAt: Date.now() - 3600000,
-  },
-];
+// ─── API HELPERS ───
+async function apiFetch(url) {
+  const res = await fetch(url);
+  return res.json();
+}
 
-const MOCK_SEARCH_RESULTS = [
-  { id: 64593, name: "Torrisi", neighborhood: "SoHo", cuisine: ["Italian"], priceRange: 4, rating: 4.8, isGDA: true },
-  { id: 6194, name: "Carbone", neighborhood: "Greenwich Village", cuisine: ["Italian"], priceRange: 4, rating: 4.7, isGDA: true },
-  { id: 12345, name: "Don Angie", neighborhood: "West Village", cuisine: ["Italian-American"], priceRange: 3, rating: 4.6, isGDA: false },
-  { id: 55555, name: "Carne Mare", neighborhood: "Seaport", cuisine: ["Steakhouse", "Italian"], priceRange: 3, rating: 4.5, isGDA: true },
-  { id: 10726, name: "Crown Shy", neighborhood: "Financial District", cuisine: ["American", "Contemporary"], priceRange: 4, rating: 4.7, isGDA: true },
-];
+async function apiPost(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+async function apiDelete(url) {
+  const res = await fetch(url, { method: "DELETE" });
+  return res.json();
+}
 
 // ─── UTILITY FUNCTIONS ───
 function formatTimeAgo(ts) {
+  if (!ts) return "—";
   const diff = Date.now() - ts;
   if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
@@ -122,6 +65,7 @@ function formatDuration(ms) {
 }
 
 function formatCountdown(targetISO) {
+  if (!targetISO) return "—";
   const diff = new Date(targetISO) - Date.now();
   if (diff <= 0) return "NOW";
   const h = Math.floor(diff / 3600000);
@@ -137,16 +81,9 @@ function priceSymbol(n) {
 }
 
 function formatDate(dateStr) {
+  if (!dateStr) return "—";
   const d = new Date(dateStr + "T12:00:00");
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function formatTime24to12(t) {
-  const [h, m] = t.split(":");
-  const hour = parseInt(h);
-  const ampm = hour >= 12 ? "PM" : "AM";
-  const h12 = hour % 12 || 12;
-  return `${h12}:${m} ${ampm}`;
 }
 
 // ─── COMPONENTS ───
@@ -186,7 +123,7 @@ function StatusDot({ status }) {
 function StatusLabel({ status, mode }) {
   const labelMap = {
     booked: "BOOKED",
-    polling: mode === "cancellation" ? "SNIPING" : "SNIPING",
+    polling: "SNIPING",
     waiting: "WAITING",
     monitoring: "MONITORING",
     failed: "FAILED",
@@ -223,6 +160,8 @@ function WatchCard({ watch, onClick }) {
     failed: COLORS.red + "20",
   };
 
+  const seatType = watch.seatType || watch.filters?.seatTypes?.[0] || "";
+
   return (
     <div
       onClick={onClick}
@@ -254,7 +193,7 @@ function WatchCard({ watch, onClick }) {
       </div>
 
       <div style={{ fontFamily: FONT.mono, fontSize: 12, color: COLORS.textMuted, marginBottom: 8 }}>
-        {formatDate(watch.targetDate)} · {watch.partySize}p · {watch.seatType}
+        {watch.targetDate ? formatDate(watch.targetDate) : (watch.dates || []).map(formatDate).join(", ")} · {watch.partySize}p{seatType ? ` · ${seatType}` : ""}
       </div>
 
       <div style={{ fontFamily: FONT.mono, fontSize: 11, color: COLORS.textDim }}>
@@ -265,7 +204,7 @@ function WatchCard({ watch, onClick }) {
         )}
         {watch.status === "polling" && (
           <span>
-            {watch.pollCount.toLocaleString()} polls · {watch.slotsFound} found
+            {(watch.pollCount || 0).toLocaleString()} polls · {watch.slotsFound || 0} found
           </span>
         )}
         {watch.status === "waiting" && watch.releaseTime && (
@@ -273,9 +212,10 @@ function WatchCard({ watch, onClick }) {
         )}
         {watch.status === "monitoring" && (
           <span style={{ color: COLORS.amber }}>
-            {watch.slotsFound} slots · {formatTimeAgo(watch.lastCheck)}
+            {watch.slotsFound || 0} slots · {formatTimeAgo(watch.lastCheck)}
           </span>
         )}
+        {watch.status === "stopped" && <span>Stopped</span>}
       </div>
     </div>
   );
@@ -320,12 +260,12 @@ function SearchResult({ result, onSelect }) {
             {result.name}
           </span>
           <span style={{ fontFamily: FONT.mono, fontSize: 11, color: COLORS.textMuted, marginLeft: 8 }}>
-            {result.cuisine[0]} · {result.neighborhood}
+            {(result.cuisine || [])[0] || ""} · {result.neighborhood}
           </span>
         </div>
         <div style={{ fontFamily: FONT.mono, fontSize: 11, color: COLORS.textMuted, display: "flex", gap: 8, alignItems: "center" }}>
           <span>{priceSymbol(result.priceRange)}</span>
-          <span style={{ color: COLORS.accent }}>★ {result.rating}</span>
+          {result.rating > 0 && <span style={{ color: COLORS.accent }}>★ {result.rating}</span>}
           {result.isGDA && (
             <span
               style={{
@@ -346,7 +286,7 @@ function SearchResult({ result, onSelect }) {
   );
 }
 
-function WatchDetailView({ watch, onBack }) {
+function WatchDetailView({ watch, onBack, onStop, onStart, onDelete }) {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -362,6 +302,8 @@ function WatchDetailView({ watch, onBack }) {
     monitor: "MONITOR",
   };
 
+  const seatType = watch.seatType || watch.filters?.seatTypes?.[0] || "—";
+
   return (
     <div>
       <div
@@ -376,13 +318,13 @@ function WatchDetailView({ watch, onBack }) {
           {watch.venueName}
         </div>
         <div style={{ fontFamily: FONT.mono, fontSize: 13, color: COLORS.textMuted }}>
-          {formatDate(watch.targetDate)}, 2026 · {watch.partySize} guests · {watch.seatType}
+          {watch.targetDate ? formatDate(watch.targetDate) : (watch.dates || []).map(formatDate).join(", ")} · {watch.partySize} guests · {seatType}
         </div>
       </div>
 
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24 }}>
         <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", color: COLORS.textMuted }}>
-          {modeLabel[watch.mode]}
+          {modeLabel[watch.mode] || watch.mode}
         </span>
         <StatusDot status={watch.status} />
         <StatusLabel status={watch.status} mode={watch.mode} />
@@ -401,14 +343,14 @@ function WatchDetailView({ watch, onBack }) {
         }}
       >
         {[
-          { label: "Polls", value: watch.pollCount.toLocaleString() },
-          { label: "Interval", value: watch.mode === "monitor" ? "60s" : watch.mode === "release" ? "500ms" : "3s" },
+          { label: "Polls", value: (watch.pollCount || 0).toLocaleString() },
+          { label: "Interval", value: watch.mode === "release" ? "500ms" : watch.mode === "cancellation" ? "3s" : "60s" },
           { label: "Running", value: running },
           { label: "Last check", value: lastCheckStr },
           { label: "Slots found", value: String(watch.slotsFound || 0) },
           {
             label: "Status",
-            value: watch.status === "booked" ? `Booked ${watch.bookedTime}` : watch.status === "waiting" ? `Release in ${formatCountdown(watch.releaseTime)}` : "Active",
+            value: watch.status === "booked" ? `Booked ${watch.bookedTime || ""}` : watch.status === "waiting" ? `Release in ${formatCountdown(watch.releaseTime)}` : watch.status === "stopped" ? "Stopped" : "Active",
           },
         ].map((item) => (
           <div key={item.label}>
@@ -420,77 +362,66 @@ function WatchDetailView({ watch, onBack }) {
         ))}
       </div>
 
-      <div style={{ marginBottom: 16, fontFamily: FONT.mono, fontSize: 11, color: COLORS.textDim, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-        Activity Log
-      </div>
-      <div
-        style={{
-          background: COLORS.surface,
-          border: `1px solid ${COLORS.border}`,
-          borderRadius: 8,
-          padding: "4px 0",
-          maxHeight: 200,
-          overflow: "auto",
-        }}
-      >
-        {Array.from({ length: 15 }, (_, i) => {
-          const t = new Date(now - i * 3000);
-          const timeStr = t.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
-          const pollNum = (watch.pollCount || 0) - i;
-          return (
-            <div
-              key={i}
-              style={{
-                fontFamily: FONT.mono,
-                fontSize: 11,
-                color: COLORS.textDim,
-                padding: "4px 14px",
-                borderBottom: i < 14 ? `1px solid ${COLORS.border}` : "none",
-              }}
-            >
-              <span style={{ color: COLORS.textMuted }}>{timeStr}</span>
-              <span style={{ marginLeft: 12 }}>Poll #{pollNum}</span>
-              <span style={{ marginLeft: 8 }}>— 0 slots</span>
-            </div>
-          );
-        })}
-      </div>
-
       <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
-        {["Pause", "Stop", "Edit"].map((label) => (
+        {watch.status !== "stopped" && watch.status !== "booked" && (
           <button
-            key={label}
+            onClick={() => onStop(watch.id)}
             style={{
-              fontFamily: FONT.mono,
-              fontSize: 11,
-              padding: "8px 16px",
-              background: COLORS.surface,
-              border: `1px solid ${COLORS.border}`,
-              borderRadius: 6,
-              color: label === "Stop" ? COLORS.red : COLORS.textMuted,
-              cursor: "pointer",
-              transition: "all 0.1s",
+              fontFamily: FONT.mono, fontSize: 11, padding: "8px 16px",
+              background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+              borderRadius: 6, color: COLORS.amber, cursor: "pointer",
             }}
           >
-            {label}
+            Stop
           </button>
-        ))}
+        )}
+        {watch.status === "stopped" && (
+          <button
+            onClick={() => onStart(watch.id)}
+            style={{
+              fontFamily: FONT.mono, fontSize: 11, padding: "8px 16px",
+              background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+              borderRadius: 6, color: COLORS.green, cursor: "pointer",
+            }}
+          >
+            Resume
+          </button>
+        )}
+        <button
+          onClick={() => { onDelete(watch.id); onBack(); }}
+          style={{
+            fontFamily: FONT.mono, fontSize: 11, padding: "8px 16px",
+            background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+            borderRadius: 6, color: COLORS.red, cursor: "pointer",
+          }}
+        >
+          Delete
+        </button>
       </div>
     </div>
   );
 }
 
-function NewSnipeView({ onBack, onActivate }) {
+function NewSnipeView({ onBack, onCreated }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [dates, setDates] = useState([""]);
+  const [venueInfo, setVenueInfo] = useState(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [partySize, setPartySize] = useState(2);
   const [earliest, setEarliest] = useState("18:00");
   const [latest, setLatest] = useState("21:00");
   const [seatTypes, setSeatTypes] = useState(["Dining Room"]);
-  const [previews, setPreviews] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [hitlist, setHitlist] = useState([]);
   const searchTimeout = useRef(null);
+
+  useEffect(() => {
+    apiFetch("/api/hitlist").then((data) => {
+      setHitlist(Array.isArray(data) ? data : []);
+    }).catch(() => {});
+  }, []);
 
   const handleSearch = useCallback((q) => {
     setQuery(q);
@@ -499,40 +430,68 @@ function NewSnipeView({ onBack, onActivate }) {
       setResults([]);
       return;
     }
-    searchTimeout.current = setTimeout(() => {
-      // Mock search — in production this hits /api/search?q=...
-      const filtered = MOCK_SEARCH_RESULTS.filter((r) => r.name.toLowerCase().includes(q.toLowerCase()));
-      setResults(filtered);
-    }, 150);
+    searchTimeout.current = setTimeout(async () => {
+      try {
+        const data = await apiFetch(`/api/search?q=${encodeURIComponent(q)}`);
+        setResults(Array.isArray(data) ? data : []);
+      } catch {
+        setResults([]);
+      }
+    }, 250);
   }, []);
 
-  const handleSelect = (result) => {
-    setSelected({
-      ...result,
-      releasePolicy: result.id === 64593 ? "Releases 30 days ahead at 10:00 AM ET" : result.id === 6194 ? "Releases 14 days ahead at 12:00 PM ET" : null,
-    });
+  const handleSelect = async (result) => {
+    setSelected(result);
     setResults([]);
     setQuery("");
+    try {
+      const info = await apiFetch(`/api/venue/${result.id}`);
+      setVenueInfo(info);
+    } catch {
+      setVenueInfo(null);
+    }
   };
 
-  useEffect(() => {
-    if (!selected || dates.every((d) => !d)) {
-      setPreviews([]);
-      return;
+  const expandedDates = (() => {
+    if (!dateFrom) return [];
+    if (!dateTo || dateTo <= dateFrom) return [dateFrom];
+    const dates = [];
+    const end = new Date(dateTo + "T12:00:00");
+    let cur = new Date(dateFrom + "T12:00:00");
+    while (cur <= end) {
+      dates.push(cur.toISOString().split("T")[0]);
+      cur.setDate(cur.getDate() + 1);
     }
-    const p = dates
-      .filter((d) => d)
-      .map((d) => {
-        const dateObj = new Date(d + "T12:00:00");
-        const now = new Date();
-        const daysDiff = Math.ceil((dateObj - now) / 86400000);
-        if (daysDiff > 30) return { date: d, mode: "release", desc: "Reservations not yet released → Release snipe" };
-        // Simulate sold out for hot restaurants
-        if ([64593, 6194].includes(selected.id)) return { date: d, mode: "cancellation", desc: "Sold out → Cancellation snipe (3s)" };
-        return { date: d, mode: "monitor", desc: `Slots available → Monitor (60s)` };
+    return dates;
+  })();
+
+  const handleActivate = async () => {
+    if (submitting || !selected || expandedDates.length === 0) return;
+    setSubmitting(true);
+
+    for (const date of expandedDates) {
+      await apiPost("/api/watches", {
+        venueId: selected.id,
+        venueName: selected.name,
+        neighborhood: selected.neighborhood,
+        cuisine: selected.cuisine,
+        targetDate: date,
+        partySize,
+        timeRange: { earliest, latest },
+        autoBook: true,
+        filters: { seatTypes },
+        mode: "cancellation", // server can auto-detect, default to cancellation
+        releaseTime: venueInfo?.releasePolicy ? undefined : undefined,
       });
-    setPreviews(p);
-  }, [selected, dates]);
+    }
+
+    setSubmitting(false);
+    onCreated();
+  };
+
+  const policyText = venueInfo?.releasePolicy
+    ? `Releases ${venueInfo.releasePolicy.advanceDays} days ahead at ${venueInfo.releasePolicy.releaseHour > 12 ? venueInfo.releasePolicy.releaseHour - 12 : venueInfo.releasePolicy.releaseHour}:${String(venueInfo.releasePolicy.releaseMinute).padStart(2, "0")} ${venueInfo.releasePolicy.releaseHour >= 12 ? "PM" : "AM"} ${venueInfo.releasePolicy.timezone}`
+    : venueInfo?.needToKnow || null;
 
   return (
     <div>
@@ -542,6 +501,60 @@ function NewSnipeView({ onBack, onActivate }) {
       >
         <span style={{ fontSize: 16 }}>←</span> Dashboard
       </div>
+
+      {/* Hitlist */}
+      {!selected && hitlist.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: COLORS.textDim, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10 }}>
+            Your Saves
+          </div>
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              overflowX: "auto",
+              paddingBottom: 4,
+              scrollbarWidth: "thin",
+            }}
+          >
+            {hitlist.map((h) => (
+              <div
+                key={h.id}
+                onClick={() => handleSelect(h)}
+                style={{
+                  flexShrink: 0,
+                  width: 160,
+                  background: COLORS.surface,
+                  border: `1px solid ${COLORS.border}`,
+                  borderRadius: 8,
+                  padding: "12px 14px",
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = COLORS.accent + "40";
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = COLORS.border;
+                  e.currentTarget.style.transform = "translateY(0)";
+                }}
+              >
+                <div style={{ fontFamily: FONT.sans, fontSize: 13, fontWeight: 600, color: COLORS.text, marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {h.name}
+                </div>
+                <div style={{ fontFamily: FONT.mono, fontSize: 10, color: COLORS.textMuted, marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {h.neighborhood}
+                </div>
+                <div style={{ fontFamily: FONT.mono, fontSize: 10, color: COLORS.textDim, display: "flex", gap: 6, alignItems: "center" }}>
+                  <span>{(h.cuisine || [])[0] || ""}</span>
+                  {h.rating > 0 && <span style={{ color: COLORS.accent }}>★ {h.rating}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Search */}
       <div style={{ position: "relative", marginBottom: selected ? 24 : 0 }}>
@@ -564,7 +577,7 @@ function NewSnipeView({ onBack, onActivate }) {
             transition: "border-color 0.15s",
           }}
           onFocus={(e) => (e.target.style.borderColor = COLORS.accent + "40")}
-          onBlur={(e) => (e.target.style.borderColor = COLORS.border)}
+          onBlur={(e) => setTimeout(() => (e.target.style.borderColor = COLORS.border), 200)}
         />
         {results.length > 0 && (
           <div
@@ -604,11 +617,11 @@ function NewSnipeView({ onBack, onActivate }) {
             <div style={{ fontFamily: FONT.sans, fontSize: 18, fontWeight: 700, color: COLORS.text, marginBottom: 4 }}>
               {selected.name}
             </div>
-            <div style={{ fontFamily: FONT.mono, fontSize: 12, color: COLORS.textMuted, marginBottom: selected.releasePolicy ? 8 : 0 }}>
-              {selected.neighborhood} · {selected.cuisine[0]} · {priceSymbol(selected.priceRange)} ·{" "}
-              <span style={{ color: COLORS.accent }}>★ {selected.rating}</span>
+            <div style={{ fontFamily: FONT.mono, fontSize: 12, color: COLORS.textMuted, marginBottom: policyText ? 8 : 0 }}>
+              {selected.neighborhood} · {(selected.cuisine || [])[0] || ""} · {priceSymbol(selected.priceRange)}
+              {selected.rating > 0 && <>{" · "}<span style={{ color: COLORS.accent }}>★ {selected.rating}</span></>}
             </div>
-            {selected.releasePolicy && (
+            {policyText && (
               <div
                 style={{
                   fontFamily: FONT.mono,
@@ -620,59 +633,53 @@ function NewSnipeView({ onBack, onActivate }) {
                   display: "inline-block",
                 }}
               >
-                {selected.releasePolicy}
+                {policyText}
               </div>
             )}
           </div>
 
           {/* Config */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-            {/* Dates */}
-            <div style={{ gridColumn: "1 / -1" }}>
+            {/* Date range */}
+            <div>
               <label style={{ fontFamily: FONT.mono, fontSize: 10, color: COLORS.textDim, textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>
-                Date(s)
+                From
               </label>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {dates.map((d, i) => (
-                  <input
-                    key={i}
-                    type="date"
-                    value={d}
-                    onChange={(e) => {
-                      const next = [...dates];
-                      next[i] = e.target.value;
-                      setDates(next);
-                    }}
-                    style={{
-                      fontFamily: FONT.mono,
-                      fontSize: 12,
-                      padding: "8px 12px",
-                      background: COLORS.surface,
-                      border: `1px solid ${COLORS.border}`,
-                      borderRadius: 6,
-                      color: COLORS.text,
-                      outline: "none",
-                      colorScheme: "dark",
-                    }}
-                  />
-                ))}
-                <button
-                  onClick={() => setDates([...dates, ""])}
-                  style={{
-                    fontFamily: FONT.mono,
-                    fontSize: 12,
-                    padding: "8px 12px",
-                    background: "transparent",
-                    border: `1px dashed ${COLORS.border}`,
-                    borderRadius: 6,
-                    color: COLORS.textMuted,
-                    cursor: "pointer",
-                  }}
-                >
-                  + Add date
-                </button>
-              </div>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => {
+                  setDateFrom(e.target.value);
+                  if (!dateTo || e.target.value > dateTo) setDateTo(e.target.value);
+                }}
+                style={{
+                  fontFamily: FONT.mono, fontSize: 12, padding: "8px 12px", width: "100%",
+                  background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                  borderRadius: 6, color: COLORS.text, outline: "none", colorScheme: "dark", boxSizing: "border-box",
+                }}
+              />
             </div>
+            <div>
+              <label style={{ fontFamily: FONT.mono, fontSize: 10, color: COLORS.textDim, textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>
+                To
+              </label>
+              <input
+                type="date"
+                value={dateTo}
+                min={dateFrom}
+                onChange={(e) => setDateTo(e.target.value)}
+                style={{
+                  fontFamily: FONT.mono, fontSize: 12, padding: "8px 12px", width: "100%",
+                  background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                  borderRadius: 6, color: COLORS.text, outline: "none", colorScheme: "dark", boxSizing: "border-box",
+                }}
+              />
+            </div>
+            {expandedDates.length > 1 && (
+              <div style={{ gridColumn: "1 / -1", fontFamily: FONT.mono, fontSize: 11, color: COLORS.textMuted }}>
+                {expandedDates.length} days: {expandedDates.map(formatDate).join(", ")}
+              </div>
+            )}
 
             {/* Party size */}
             <div>
@@ -683,22 +690,13 @@ function NewSnipeView({ onBack, onActivate }) {
                 value={partySize}
                 onChange={(e) => setPartySize(parseInt(e.target.value))}
                 style={{
-                  fontFamily: FONT.mono,
-                  fontSize: 12,
-                  padding: "8px 12px",
-                  background: COLORS.surface,
-                  border: `1px solid ${COLORS.border}`,
-                  borderRadius: 6,
-                  color: COLORS.text,
-                  outline: "none",
-                  width: "100%",
-                  colorScheme: "dark",
+                  fontFamily: FONT.mono, fontSize: 12, padding: "8px 12px",
+                  background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                  borderRadius: 6, color: COLORS.text, outline: "none", width: "100%", colorScheme: "dark",
                 }}
               >
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
+                  <option key={n} value={n}>{n}</option>
                 ))}
               </select>
             </div>
@@ -710,38 +708,20 @@ function NewSnipeView({ onBack, onActivate }) {
               </label>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <input
-                  type="time"
-                  value={earliest}
-                  onChange={(e) => setEarliest(e.target.value)}
+                  type="time" value={earliest} onChange={(e) => setEarliest(e.target.value)}
                   style={{
-                    fontFamily: FONT.mono,
-                    fontSize: 12,
-                    padding: "8px 10px",
-                    background: COLORS.surface,
-                    border: `1px solid ${COLORS.border}`,
-                    borderRadius: 6,
-                    color: COLORS.text,
-                    outline: "none",
-                    colorScheme: "dark",
-                    flex: 1,
+                    fontFamily: FONT.mono, fontSize: 12, padding: "8px 10px",
+                    background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                    borderRadius: 6, color: COLORS.text, outline: "none", colorScheme: "dark", flex: 1,
                   }}
                 />
                 <span style={{ fontFamily: FONT.mono, fontSize: 11, color: COLORS.textDim }}>to</span>
                 <input
-                  type="time"
-                  value={latest}
-                  onChange={(e) => setLatest(e.target.value)}
+                  type="time" value={latest} onChange={(e) => setLatest(e.target.value)}
                   style={{
-                    fontFamily: FONT.mono,
-                    fontSize: 12,
-                    padding: "8px 10px",
-                    background: COLORS.surface,
-                    border: `1px solid ${COLORS.border}`,
-                    borderRadius: 6,
-                    color: COLORS.text,
-                    outline: "none",
-                    colorScheme: "dark",
-                    flex: 1,
+                    fontFamily: FONT.mono, fontSize: 12, padding: "8px 10px",
+                    background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                    borderRadius: 6, color: COLORS.text, outline: "none", colorScheme: "dark", flex: 1,
                   }}
                 />
               </div>
@@ -763,19 +743,15 @@ function NewSnipeView({ onBack, onActivate }) {
                         else setSeatTypes([...seatTypes, seat]);
                       }}
                       style={{
-                        fontFamily: FONT.mono,
-                        fontSize: 11,
-                        padding: "6px 12px",
+                        fontFamily: FONT.mono, fontSize: 11, padding: "6px 12px",
                         background: active ? COLORS.accent + "15" : "transparent",
                         border: `1px solid ${active ? COLORS.accent + "40" : COLORS.border}`,
                         borderRadius: 6,
                         color: active ? COLORS.accent : COLORS.textMuted,
-                        cursor: "pointer",
-                        transition: "all 0.1s",
+                        cursor: "pointer", transition: "all 0.1s",
                       }}
                     >
-                      {active ? "✓ " : ""}
-                      {seat}
+                      {active ? "✓ " : ""}{seat}
                     </button>
                   );
                 })}
@@ -783,34 +759,10 @@ function NewSnipeView({ onBack, onActivate }) {
             </div>
           </div>
 
-          {/* Preview */}
-          {previews.length > 0 && (
-            <div
-              style={{
-                background: COLORS.surface,
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: 8,
-                padding: 14,
-                marginBottom: 20,
-              }}
-            >
-              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: COLORS.textDim, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10 }}>
-                Strategy Preview
-              </div>
-              {previews.map((p) => (
-                <div key={p.date} style={{ fontFamily: FONT.mono, fontSize: 12, color: COLORS.textMuted, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: COLORS.text }}>{formatDate(p.date)}:</span>
-                  <StatusDot status={p.mode === "release" ? "waiting" : p.mode === "cancellation" ? "polling" : "monitoring"} />
-                  <span>{p.desc}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* Start button */}
           <button
-            onClick={() => onActivate && onActivate({ selected, dates, partySize, earliest, latest, seatTypes })}
-            disabled={!dates.some((d) => d)}
+            onClick={handleActivate}
+            disabled={expandedDates.length === 0 || submitting}
             style={{
               width: "100%",
               padding: "14px 0",
@@ -818,15 +770,15 @@ function NewSnipeView({ onBack, onActivate }) {
               fontSize: 13,
               fontWeight: 700,
               letterSpacing: "0.05em",
-              background: dates.some((d) => d) ? COLORS.accent : COLORS.gray,
-              color: dates.some((d) => d) ? COLORS.bg : COLORS.textDim,
+              background: expandedDates.length > 0 && !submitting ? COLORS.accent : COLORS.gray,
+              color: expandedDates.length > 0 && !submitting ? COLORS.bg : COLORS.textDim,
               border: "none",
               borderRadius: 8,
-              cursor: dates.some((d) => d) ? "pointer" : "default",
+              cursor: expandedDates.length > 0 && !submitting ? "pointer" : "default",
               transition: "all 0.15s",
             }}
           >
-            START SNIPING
+            {submitting ? "CREATING..." : expandedDates.length > 1 ? `START SNIPING (${expandedDates.length} DAYS)` : "START SNIPING"}
           </button>
         </>
       )}
@@ -835,30 +787,50 @@ function NewSnipeView({ onBack, onActivate }) {
 }
 
 // ─── MAIN APP ───
-export default function App() {
-  const [view, setView] = useState("dashboard"); // dashboard | new | detail
-  const [watches, setWatches] = useState(MOCK_WATCHES);
+function App() {
+  const [view, setView] = useState("dashboard");
+  const [watches, setWatches] = useState([]);
   const [selectedWatch, setSelectedWatch] = useState(null);
-  const [now, setNow] = useState(Date.now());
 
-  // Simulate live updates
+  // Fetch watches on load
   useEffect(() => {
-    const interval = setInterval(() => {
-      setNow(Date.now());
-      setWatches((prev) =>
-        prev.map((w) => {
-          if (w.status === "polling") {
-            return { ...w, pollCount: w.pollCount + 1, lastCheck: Date.now() };
-          }
-          if (w.status === "monitoring") {
-            return { ...w, pollCount: w.pollCount + 1, lastCheck: Date.now(), slotsFound: 2 + Math.floor(Math.random() * 3) };
-          }
-          return w;
-        })
-      );
-    }, 3000);
-    return () => clearInterval(interval);
+    apiFetch("/api/watches").then(setWatches).catch(() => {});
   }, []);
+
+  // SSE connection for live updates
+  useEffect(() => {
+    const es = new EventSource("/api/events");
+    es.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data);
+        if (event.type === "watches") {
+          setWatches(event.data);
+        } else if (event.type === "poll" || event.type === "booked" || event.type === "slot_found") {
+          // Incremental update — refetch full list
+          apiFetch("/api/watches").then(setWatches).catch(() => {});
+        }
+      } catch {}
+    };
+    return () => es.close();
+  }, []);
+
+  const handleStop = async (id) => {
+    await apiPost(`/api/watches/${id}/stop`);
+    const data = await apiFetch("/api/watches");
+    setWatches(data);
+  };
+
+  const handleStart = async (id) => {
+    await apiPost(`/api/watches/${id}/start`);
+    const data = await apiFetch("/api/watches");
+    setWatches(data);
+  };
+
+  const handleDelete = async (id) => {
+    await apiDelete(`/api/watches/${id}`);
+    const data = await apiFetch("/api/watches");
+    setWatches(data);
+  };
 
   return (
     <div
@@ -889,7 +861,6 @@ export default function App() {
 
       {view === "dashboard" && (
         <>
-          {/* Header */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <div style={{ fontFamily: FONT.mono, fontSize: 18, fontWeight: 700, color: COLORS.text, letterSpacing: "-0.02em" }}>
               Resy<span style={{ color: COLORS.accent }}>Snipe</span>
@@ -897,17 +868,10 @@ export default function App() {
             <button
               onClick={() => setView("new")}
               style={{
-                fontFamily: FONT.mono,
-                fontSize: 11,
-                fontWeight: 600,
-                padding: "8px 14px",
-                background: COLORS.accent,
-                color: COLORS.bg,
-                border: "none",
-                borderRadius: 6,
-                cursor: "pointer",
-                letterSpacing: "0.02em",
-                transition: "opacity 0.1s",
+                fontFamily: FONT.mono, fontSize: 11, fontWeight: 600,
+                padding: "8px 14px", background: COLORS.accent,
+                color: COLORS.bg, border: "none", borderRadius: 6,
+                cursor: "pointer", letterSpacing: "0.02em", transition: "opacity 0.1s",
               }}
               onMouseEnter={(e) => (e.target.style.opacity = "0.85")}
               onMouseLeave={(e) => (e.target.style.opacity = "1")}
@@ -920,14 +884,13 @@ export default function App() {
             <StatsBar watches={watches} />
           </div>
 
-          {/* Watch grid */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {watches.map((w) => (
               <WatchCard
                 key={w.id}
                 watch={w}
                 onClick={() => {
-                  setSelectedWatch(w);
+                  setSelectedWatch(w.id);
                   setView("detail");
                 }}
               />
@@ -940,15 +903,9 @@ export default function App() {
               <button
                 onClick={() => setView("new")}
                 style={{
-                  fontFamily: FONT.mono,
-                  fontSize: 12,
-                  padding: "10px 20px",
-                  background: COLORS.accent,
-                  color: COLORS.bg,
-                  border: "none",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  fontWeight: 600,
+                  fontFamily: FONT.mono, fontSize: 12, padding: "10px 20px",
+                  background: COLORS.accent, color: COLORS.bg, border: "none",
+                  borderRadius: 6, cursor: "pointer", fontWeight: 600,
                 }}
               >
                 + New Snipe
@@ -961,17 +918,29 @@ export default function App() {
       {view === "new" && (
         <NewSnipeView
           onBack={() => setView("dashboard")}
-          onActivate={(config) => {
-            // In production: POST /api/watches → creates watch → starts snipe
-            console.log("Activating:", config);
+          onCreated={async () => {
+            const data = await apiFetch("/api/watches");
+            setWatches(data);
             setView("dashboard");
           }}
         />
       )}
 
-      {view === "detail" && selectedWatch && (
-        <WatchDetailView watch={selectedWatch} onBack={() => setView("dashboard")} />
-      )}
+      {view === "detail" && selectedWatch && (() => {
+        const detailWatch = watches.find((w) => w.id === selectedWatch) || null;
+        return detailWatch ? (
+          <WatchDetailView
+            watch={detailWatch}
+            onBack={() => setView("dashboard")}
+            onStop={handleStop}
+            onStart={handleStart}
+            onDelete={handleDelete}
+          />
+        ) : null;
+      })()}
     </div>
   );
 }
+
+// ─── MOUNT ───
+createRoot(document.getElementById("root")).render(<App />);
