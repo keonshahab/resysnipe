@@ -70,6 +70,7 @@ class WatchManager {
       venueName: body.venueName,
       neighborhood: body.neighborhood,
       cuisine: body.cuisine,
+      image: body.image,
       targetDate: body.targetDate,
       dates: body.dates,
       partySize: body.partySize || 2,

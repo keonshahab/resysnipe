@@ -18,6 +18,12 @@ router.post('/', (req, res) => {
   }
 });
 
+router.delete('/all', (req, res) => {
+  const all = manager.getAllWatches();
+  for (const w of all) manager.deleteWatch(w.id);
+  res.json({ ok: true, deleted: all.length });
+});
+
 router.delete('/:id', (req, res) => {
   const removed = manager.deleteWatch(req.params.id);
   if (!removed) return res.status(404).json({ error: 'Watch not found' });

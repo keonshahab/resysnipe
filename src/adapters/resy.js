@@ -66,13 +66,12 @@ async function checkAvailability({ venueId, date, partySize, timeRange, location
 }
 
 async function getVenueInfo(venueId) {
-  const venues = await fetchAllVenues({
-    date: new Date().toISOString().split('T')[0],
-    partySize: 2,
+  const response = await axios.get(`${BASE_URL}/3/venue`, {
+    headers: getHeaders(),
+    params: { id: venueId },
+    timeout: 5000,
   });
-
-  const match = venues.find((v) => v.venue?.id?.resy === venueId);
-  return match?.venue || null;
+  return response.data || null;
 }
 
 async function getBookToken(slot, partySize) {
@@ -112,16 +111,18 @@ async function autoBook(slot, partySize) {
 }
 
 async function getVenueNeedToKnow(venueId) {
-  const venues = await fetchAllVenues({
-    date: new Date().toISOString().split('T')[0],
-    partySize: 2,
+  const response = await axios.get(`${BASE_URL}/3/venue`, {
+    headers: getHeaders(),
+    params: { id: venueId },
+    timeout: 5000,
   });
-
-  const match = venues.find((v) => v.venue?.id?.resy === venueId);
-  if (!match) return null;
-
-  // need_to_know can be in venue.need_to_know, venue.about, or templates
-  return match.venue?.need_to_know || match.venue?.about?.need_to_know || null;
+  const data = response.data || {};
+  // need_to_know is in the content array
+  if (Array.isArray(data.content)) {
+    const ntk = data.content.find((c) => c.name === 'need_to_know');
+    if (ntk?.body) return ntk.body;
+  }
+  return data.need_to_know || null;
 }
 
 module.exports = {

@@ -44,7 +44,7 @@ router.get('/', async (req, res) => {
       neighborhood: h.neighborhood || '',
       cuisine: h.cuisine || [],
       priceRange: h.price_range_id || h.price_range || 0,
-      rating: h.rating || 0,
+      rating: Math.round(((h.rating?.average || h.rating || 0) + Number.EPSILON) * 10) / 10,
       isGDA: h.is_global_dining_access || false,
       urlSlug: h.url_slug || '',
       images: h.images || [],
